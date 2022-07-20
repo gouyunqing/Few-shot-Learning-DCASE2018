@@ -5,6 +5,11 @@ import random
 from Create_Hparams import boot_a_new_experiment
 from build_dataset import generate_pairs_scripts
 from trainer import Trainer
+import torch.nn as nn
+from build_dataset import MeldataSet
+from model import Classifier
+
+
 def same_seeds(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -38,4 +43,34 @@ if __name__=="__main__":
     print("seg mel len:",loaded_hp.mel_seglen)
 
     t = Trainer(loaded_hp)
-    t.train_by_epoch()
+    # t.train_by_epoch()
+
+    model = torch.load(r'D:\毕设相关\第一次尝试\Experiments\v0\checkpoints_v0\019999.pth')
+    model.to('cpu')
+    TestmeldataLoader = MeldataSet(scp_dir=r'D:\毕设相关\第一次尝试\Experiments\v0\test.txt',
+                                     seglen=1024
+                                     )
+    pred_list = []
+    label_list = []
+
+    correct_num = 0
+    with torch.no_grad():  ## 测试的过程中不需要计算 梯度。
+        for batch in TestmeldataLoader:
+            mels, labels = [b for b in batch]  # mels:[B,80,256] labels:[B]
+            mels = mels.unsqueeze(0)
+            mels = mels.unsqueeze(1).permute(0, 1, 3, 2)
+            pred_prob = model(mels)  ## 输出分类概率 [B,num_class]
+            batch_loss = nn.CrossEntropyLoss(pred_prob, labels)
+            pred_index = torch.max(pred_prob, dim=1)[1][0]  # 求 最大概率的下标
+            pred_list.append(pred_index)
+            label_list.append(labels)
+            batch_acc_num = (pred_index == labels).sum()
+            correct_num += batch_acc_num
+        batch_accuracy = correct_num / 2924  ## 准确率 = 判对数量 / 总test语音数量
+        print(batch_accuracy)
+
+    print(pred_list)
+    print(label_list)
+
+
+

@@ -1,6 +1,4 @@
-import pickle
+import torch
 
-with open('file2class.pkl', 'rb') as f:
-    dict = pickle.load(f)
-
-print(dict[104936])
+model = torch.load(r'D:\毕设相关\第一次尝试\Experiments\v0\checkpoints_v0\007999.pth')
+print(model)

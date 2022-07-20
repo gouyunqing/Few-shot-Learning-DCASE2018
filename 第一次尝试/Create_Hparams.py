@@ -12,6 +12,7 @@ class Create_Train_Hparams():
         ################################################################
         ################ Trainer  ###################################
         self.total_iters = 1000 ## 总共训练步骤
+        self.epoch_num = 10
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.model_save_every = 200  ## 每隔200次 保存一次模型
         self.lr_update_every = 200
@@ -19,9 +20,9 @@ class Create_Train_Hparams():
 
         ################ dataset / loader  ###################################
         self.train_ratio  = 0.9 ## 切分训练集、测试集的比例
-        self.mel_seglen = 256  ###  训练时，谱被padding的长度
+        self.mel_seglen = 1024  ###  训练时，谱被padding的长度
         self.min_train_mellen = 120 ### 生成表单中，所含有的 pairs的最大melspec长度。
-        self.batchsize_train  = 12 ## 训练的batchsize
+        self.batchsize_train = 128 ## 训练的batchsize
         ################ model params ################################
 
         # 这里的模型不提供 修改模型结构的参数
@@ -34,12 +35,12 @@ class Create_Train_Hparams():
         self.beta1 = 0.9
         self.beta2 = 0.999
         self.amsgrad = True
-        self.weight_decay  = 0.0001
-        self.grad_norm  = 3 # 梯度剪裁
+        self.weight_decay = 0.0001
+        self.grad_norm = 3  # 梯度剪裁
         self.is_lr_decay = False ## 训练过程中学习率是否下降
 
         ####################### model params #########################################
-        self.speaker_nums = 5  ## 数据集的分类数量。
+        self.speaker_nums = 2  ## 数据集的分类数量。
 
         ################################################################
         ## Experiment File dir
@@ -74,7 +75,7 @@ class Create_Prepro_Hparams():
         self.feature_dir_name = r'2018年数据集三合一'  ## 目标文件夹路径
         self.trim_db = 20  #  静音消除参数
         self.n_fft = 1024  # 提取出 513维度的傅里叶谱，再转为80维度 melspec
-        self.win_length = 1024 # 帧长
+        self.win_length = 1024  # 帧长
         self.hop_length = 256  #帧移
         self.sample_rate = 22050
         self.f_min = 0

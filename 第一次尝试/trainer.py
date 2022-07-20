@@ -18,6 +18,7 @@ class Trainer(object):
         self.device = hp.device
         self.set_trainer_configuration()
         self.cls_nums = self.hp.speaker_nums ##
+        self.best_loss = 10000
 
         pass
 
@@ -42,10 +43,14 @@ class Trainer(object):
                                         drop_last=True)
 
 
-    def build_models(self):
+    def build_models(self, model=None):
 
         self.current_lr = self.hp.lr_start
-        self.model = Classifier(input_size=self.hp.n_mels,hidden_size=128,num_layers=2,num_classes=self.hp.speaker_nums)
+        if model is None:
+            self.model = Classifier(input_size=self.hp.n_mels,hidden_size=256,num_layers=2,num_classes=self.hp.speaker_nums)
+        # 用于测试
+        else:
+            self.model = model
         self.loss_func = nn.CrossEntropyLoss() ## 分类最常用的交叉熵概率
         self.optimizer = torch.optim.Adam(self.model.parameters(),self.current_lr,
                                             betas=(self.hp.beta1, self.hp.beta2))
@@ -55,7 +60,7 @@ class Trainer(object):
 
     def set_trainer_configuration(self):
         ## 训练前的一系列初始化
-        self.epoch_num = 0 ## 在迭代第几次数据集
+        self.epoch_num = 10 ## 在迭代第几次数据集
         self.current_iter = 0  ## 当前在迭代第几次batch
         self.init_logger()    ## 创建 日志文件
         self.prepareDataloader()  ## 创建数据集
@@ -125,13 +130,13 @@ class Trainer(object):
         pdict = {"model":self.model.state_dict(),
                  }
         path = self.hp.model_savedir / "{:06}.pth".format(i)
-        torch.save(pdict, str(path))
+        torch.save(self.model, str(path))
         print("---------------- model saved ------------------- ")
 
     def check_stop(self):
         ## 中断训练,保存模型和loss字典
-        if self.current_iter > self.hp.total_iters:
-            self.save_model(self.current_iter)
+        if self.current_epoch > self.hp.epoch_num:
+            # self.save_model(self.current_iter)
             savingpath = str(self.hp.ep_version_dir / 'running_loss_{}.pickle'.format(self.hp.ep_version))
             with open(savingpath, 'wb') as f1:
                 pickle.dump(self.loss_log_dict, f1)
@@ -157,50 +162,63 @@ class Trainer(object):
                             "loss":batch_loss.item(),
                              "acc":batch_accuracy}
             self.write_line2log(losse_curves, self.hp.ep_logfilepath_eval, isprint=True)
+            return batch_loss.item()
 
     def train_a_epoch(self):
-        for batch in self.meldataLoader:
-            self.current_iter += 1
-            self.epoch_num = self.current_iter // (self.DataNum // self.hp.batchsize_train)
-            self.check_stop() ## 判断停止的条件。
-            mels,labels = self.to_gpu(batch) # mels:[B,80,256] labels:[B]
-            mels = mels.unsqueeze(1).permute(0,1,3,2)
-            pred_prob = self.model(mels) ## 输出分类概率 [B,num_class]
-            batch_loss = self.loss_func(pred_prob,labels)
-            pred_index = torch.max(pred_prob, dim=1)[1]  # 求 最大概率的下标
-            batch_accuracy = accuracy_score(labels.cpu(), pred_index.cpu())  # 计算准确率
+        curr_loss = 100000
+        for i in range(self.epoch_num):
+            cur_epoch = i
+            for batch in self.meldataLoader:
+                self.current_iter += 1
+                # self.check_stop() ## 判断停止的条件。
+                mels,labels = self.to_gpu(batch) # mels:[B,80,256] labels:[B]
+                mels = mels.unsqueeze(1).permute(0,1,3,2)
+                pred_prob = self.model(mels) ## 输出分类概率 [B,num_class]
+                batch_loss = self.loss_func(pred_prob,labels)
+                pred_index = torch.max(pred_prob, dim=1)[1]  # 求 最大概率的下标
+                batch_accuracy = accuracy_score(labels.cpu(), pred_index.cpu())  # 计算准确率
 
-            self.reset_grad()        ## 清空计算图中的梯度
-            batch_loss.backward()    ## 计算 计算图每个参数的梯度
-            self.optimizer.step()     ## 更新每个参数。
+                self.reset_grad()        ## 清空计算图中的梯度
+                batch_loss.backward()    ## 计算 计算图每个参数的梯度
+                self.optimizer.step()     ## 更新每个参数。
 
-            losse_curves  = {"train_step--":"",
-                             "epoch":self.epoch_num,
-                             "steps":self.current_iter,
-                            "loss":batch_loss.item(),
-                             "acc":batch_accuracy,
-                             }
-            ## 在训练第一步完成后，建立一个字典保存losses {"loss name” : [loss_data ]}
-            if self.current_iter == 1:
-                print("create loss dict")
-                self.loss_log_dict = {}
-                for k, v in losse_curves.items():
-                    self.loss_log_dict[k] = []
-                print("loss dict created")
-            ##############################################################################
+                losse_curves  = {"train_step--":"",
+                                 "epoch":cur_epoch,
+                                 "steps":self.current_iter,
+                                "loss":batch_loss.item(),
+                                 "acc":batch_accuracy,
+                                 }
+                ## 在训练第一步完成后，建立一个字典保存losses {"loss name” : [loss_data ]}
+                if self.current_iter == 1:
+                    print("create loss dict")
+                    self.loss_log_dict = {}
+                    for k, v in losse_curves.items():
+                        self.loss_log_dict[k] = []
+                    print("loss dict created")
+                ##############################################################################
 
-            #######  loss save ######################################################
-            for k, v in self.loss_log_dict.items():
-                self.loss_log_dict[k].append(losse_curves[k])  # 把每batch的loss数据加入到 loss curves中
-            self.write_line2log(losse_curves, self.hp.ep_logfilepath, isprint=True)
-            #########################################################################
-        ########################################### 其他东西 ##########################################
-            if (self.current_iter + 1) % self.hp.eval_every == 0:
-                self.test_accuracy()  ## 每 几步验证一次准确率。
+                #######  loss save ######################################################
+                for k, v in self.loss_log_dict.items():
+                    self.loss_log_dict[k].append(losse_curves[k])  # 把每batch的loss数据加入到 loss curves中
+                self.write_line2log(losse_curves, self.hp.ep_logfilepath, isprint=True)
+                #########################################################################
+            ########################################### 其他东西 ##########################################
+                if (self.current_iter + 1) % 1000 == 0:
+                    curr_loss = self.test_accuracy()  ## 每 几步验证一次准确率。
+                    print(curr_loss)
 
-            ## 模型保存
-            if (self.current_iter + 1) % self.hp.model_save_every == 0:
-                self.save_model(self.current_iter)
+                ## 模型保存
+                # if (self.current_iter + 1) % self.hp.model_save_every == 0:
+                #     self.save_model(self.current_iter)
+                if self.best_loss > curr_loss:
+                    print(curr_loss)
+                    print('-----------------------SAVED------------------------------------')
+                    self.save_model(self.current_iter)
+                    self.best_loss = curr_loss
+        savingpath = str(self.hp.ep_version_dir / 'running_loss_{}.pickle'.format(self.hp.ep_version))
+        with open(savingpath, 'wb') as f1:
+            pickle.dump(self.loss_log_dict, f1)
+        print("*************** Training End *******************")
 
         pass
 
@@ -209,8 +227,31 @@ class Trainer(object):
         Main training loop
         """
         print('------------- BEGIN TRAINING LOOP ----------------')
-        while (1):
-            self.train_a_epoch()
+        self.train_a_epoch()
+
+    def final_test(self):
+        ###  使用“test.txt"中的数据计算准确率。
+        with torch.no_grad():  ## 测试的过程中不需要计算 梯度。
+            pred_list = []
+            label_list = []
+            for batch in self.TestmeldataLoader:
+                mels, labels = self.to_gpu(batch)  # mels:[B,80,256] labels:[B]
+                mels = mels.unsqueeze(1).permute(0, 1, 3, 2)
+                pred_prob = self.model(mels)  ## 输出分类概率 [B,num_class]
+                batch_loss = self.loss_func(pred_prob, labels)
+                pred_index = torch.max(pred_prob, dim=1)[1]  # 求 最大概率的下标
+                print(pred_index)
+                print(labels)
+                batch_acc_num = (pred_index == labels).sum()
+            batch_accuracy = batch_acc_num / self.TestDataNum  ## 准确率 = 判对数量 / 总test语音数量
+
+            losse_curves = {"test_step--": "",
+                            "epoch": self.epoch_num,
+                            "steps": self.current_iter,
+                            "loss": batch_loss.item(),
+                            "acc": batch_accuracy}
+            self.write_line2log(losse_curves, self.hp.ep_logfilepath_eval, isprint=True)
+            return batch_loss.item()
 
 
 if __name__ == "__main__":
@@ -221,7 +262,7 @@ if __name__ == "__main__":
     # dataset = None
     # dataloader = DataLoader(dataset,batch_size=5)
     # # 定义 模型、优化器、损失函数
-    # model  = Classifier()
+    # model = torch.load(r'D:\毕设相关\第一次尝试\Experiments\v0\checkpoints_v0\007999.pth')
     # lossfunction = None
     # optimizer = None
     # # 定义 训练 循环
